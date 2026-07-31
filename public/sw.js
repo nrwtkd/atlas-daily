@@ -1,4 +1,4 @@
-const CACHE = "atlas-daily-v0.1";
+const CACHE = "atlas-daily-v0.2";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/atlas-daily-icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -15,11 +15,30 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put("/", copy));
+          return response;
+        })
+        .catch(() => caches.match("/"))
+    );
+    return;
+  }
+
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {
-      const copy = response.clone();
-      caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-      return response;
-    }).catch(() => caches.match("/")))
+    caches.match(event.request).then((cached) => {
+      const refreshed = fetch(event.request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+          return response;
+        })
+        .catch(() => cached);
+      return cached || refreshed;
+    })
   );
 });
