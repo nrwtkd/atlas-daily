@@ -1,6 +1,5 @@
-export type Capacity = "tipis" | "cukup" | "lapang";
-export type ItemStatus = "inbox" | "today" | "later" | "done" | "released";
-export type Screen = "today" | "dump" | "later" | "close" | "data";
+export type Screen = "today" | "goals" | "journey" | "data";
+export type GoalStatus = "active" | "paused" | "completed";
 
 export interface AtlasProfile {
   localProfileId: string;
@@ -9,32 +8,32 @@ export interface AtlasProfile {
   updatedAt: string;
 }
 
-export interface AtlasItem {
+export interface Goal {
   id: string;
-  text: string;
-  status: ItemStatus;
+  title: string;
+  why: string;
+  targetDate?: string;
+  status: GoalStatus;
   createdAt: string;
   updatedAt: string;
-  plannedFor?: string;
   completedAt?: string;
-  releasedAt?: string;
-  source: "brain-dump" | "manual" | "carry-over";
 }
 
-export interface DailyCheckIn {
+export interface GoalStep {
   id: string;
-  date: string;
-  capacity: Capacity;
-  enoughNote: string;
+  goalId: string;
+  title: string;
+  scheduledFor?: string;
+  completedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface AtlasDailyState {
-  schemaVersion: 1;
+  schemaVersion: 2;
   profile: AtlasProfile;
-  items: AtlasItem[];
-  checkIns: DailyCheckIn[];
+  goals: Goal[];
+  steps: GoalStep[];
   lastUpdatedAt: string;
   syncMetadata: {
     remoteUserId?: string;
@@ -45,6 +44,6 @@ export interface AtlasDailyState {
 export interface ImportEnvelope {
   product: "atlas-daily";
   exportedAt: string;
-  schemaVersion: 1;
+  schemaVersion: 2;
   state: AtlasDailyState;
 }
