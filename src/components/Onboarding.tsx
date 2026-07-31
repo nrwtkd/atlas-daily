@@ -16,14 +16,15 @@ export default function Onboarding({ onCreate }: { onCreate: (name: string) => P
       <section className="onboardingCard">
         <span className="onboardingLogo"><Icon name="spark" size={28}/></span>
         <p className="eyebrow">ATLAS DAILY</p>
-        <h1>Goal-mu tidak terlalu jauh. Kita hanya perlu langkah hari ini.</h1>
-        <p className="lead">Buat tujuan, pecah menjadi langkah kecil, lalu tumbuhkan maskotmu setiap kali kamu benar-benar bergerak.</p>
+        <h1>Dari “aku ingin” menjadi “hari ini aku mulai dari sini”.</h1>
+        <p className="lead">Kamu tidak perlu pandai membuat target. Atlas akan memandumu memperjelas tujuan, menyusun tahapan, lalu memilih langkah yang sesuai dengan kapasitas hidupmu.</p>
+        <div className="onboardingPromise"><span><Icon name="check" size={16}/></span><p>Satu pertanyaan per layar. Tidak ada dashboard yang harus dipelajari lebih dulu.</p></div>
         <form onSubmit={submit}>
           <label htmlFor="name">Kami boleh menyapamu siapa?</label>
           <input id="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Namamu" autoFocus/>
-          <button className="primaryButton wide" disabled={!name.trim() || saving}>{saving ? "Menyiapkan perjalanan…" : "Mulai perjalanan"}<Icon name="arrow" size={18}/></button>
+          <button className="primaryButton wide" disabled={!name.trim() || saving}>{saving ? "Menyiapkan ruangmu…" : "Susun tujuan pertamaku"}<Icon name="arrow" size={18}/></button>
         </form>
-        <div className="privacyLine"><span>●</span> Data versi ini tersimpan di perangkatmu.</div>
+        <div className="privacyLine"><span>●</span> Data versi ini tersimpan di perangkatmu. Tidak perlu akun atau langganan.</div>
       </section>
     </div>
   );
