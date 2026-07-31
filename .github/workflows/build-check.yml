@@ -8,36 +8,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-life-coach-payload:
-    if: github.event_name == 'pull_request' && github.head_ref == 'feature/life-coach-v03'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout feature branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-
-      - name: Apply staged source when present
-        shell: bash
-        run: |
-          if [ ! -d .bootstrap ]; then
-            echo "Payload already applied."
-            exit 0
-          fi
-          cat .bootstrap/part-* > /tmp/atlas-v03.b64
-          base64 --decode /tmp/atlas-v03.b64 > /tmp/atlas-v03.zip
-          unzip -oq /tmp/atlas-v03.zip -d .
-          rm -rf .bootstrap
-          rm -f .github/workflows/apply-v03.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "feat: build guided life-coach goal flow"
-          git push
-
   build:
     runs-on: ubuntu-latest
     steps:
