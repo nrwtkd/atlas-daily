@@ -1,0 +1,17 @@
+{
+  "name": "Atlas Daily",
+  "short_name": "Atlas Daily",
+  "description": "Tuangkan isi kepala. Pegang yang cukup untuk hari ini.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f5ef",
+  "theme_color": "#eef2e9",
+  "icons": [
+    {
+      "src": "/atlas-daily-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
