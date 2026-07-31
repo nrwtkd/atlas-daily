@@ -1,22 +1,31 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import AppShell from "./components/AppShell";
 import Icon from "./components/Icon";
+import Mascot from "./components/Mascot";
 import Onboarding from "./components/Onboarding";
-import { capacityCopy, getDoneToday, getTodayItems, getTodayKey, splitBrainDump } from "./domain/dailyRules";
-import type { AtlasDailyState, AtlasItem, Capacity, Screen } from "./domain/types";
+import {
+  getCompletedToday,
+  getGoalProgress,
+  getGoalSteps,
+  getMascotStage,
+  getStageProgress,
+  getTodayKey,
+  getTodaySteps,
+  mascotStages
+} from "./domain/dailyRules";
+import type { AtlasDailyState, Goal, GoalStep, Screen } from "./domain/types";
 import { AtlasDailyService } from "./services/atlasDailyService";
 import { IndexedDbAtlasDailyRepository } from "./storage/indexedDbRepository";
 import "./styles.css";
 
 const service = new AtlasDailyService(new IndexedDbAtlasDailyRepository());
-const capacityOrder: Capacity[] = ["tipis", "cukup", "lapang"];
 
 function formatLongDate(): string {
   return new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date());
 }
 
-function replaceItem(state: AtlasDailyState, nextItem: AtlasItem): AtlasDailyState {
-  return { ...state, items: state.items.map((item) => item.id === nextItem.id ? nextItem : item) };
+function goalById(state: AtlasDailyState, id: string): Goal | undefined {
+  return state.goals.find((goal) => goal.id === id);
 }
 
 function App() {
@@ -34,28 +43,22 @@ function App() {
     setState(saved);
   }
 
-  if (loading) return <div className="loadingPage"><span className="onboardingLogo"><Icon name="leaf" size={28}/></span><p>Menyiapkan ruangmu…</p></div>;
-  if (!state) return <Onboarding onCreate={async (name) => setState(await service.createProfile(name))} />;
+  if (loading) return <div className="loadingPage"><span className="onboardingLogo"><Icon name="spark" size={28}/></span><p>Menyiapkan perjalananmu…</p></div>;
+  if (!state) return <Onboarding onCreate={async (name) => setState(await service.createProfile(name))}/>;
 
   return (
     <AppShell name={state.profile.displayName} screen={screen} onNavigate={(next) => { setNotice(""); setScreen(next); }}>
       {notice && <div className="notice"><Icon name="spark" size={18}/><span>{notice}</span></div>}
-      {screen === "today" && <TodayScreen state={state} persist={persist} onNavigate={setScreen} setNotice={setNotice} />}
-      {screen === "dump" && <DumpScreen state={state} persist={persist} onNavigate={setScreen} setNotice={setNotice} />}
-      {screen === "later" && <LaterScreen state={state} persist={persist} setNotice={setNotice} />}
-      {screen === "close" && <CloseDayScreen state={state} persist={persist} setNotice={setNotice} />}
-      {screen === "data" && <DataScreen state={state} persist={persist} onReset={() => setState(null)} />}
+      {screen === "today" && <TodayScreen state={state} persist={persist} onNavigate={setScreen} setNotice={setNotice}/>} 
+      {screen === "goals" && <GoalsScreen state={state} persist={persist} setNotice={setNotice}/>} 
+      {screen === "journey" && <JourneyScreen state={state}/>} 
+      {screen === "data" && <DataScreen state={state} persist={persist} onReset={() => setState(null)}/>} 
     </AppShell>
   );
 }
 
-function PageHeader({ eyebrow, title, text, action }: { eyebrow: string; title: string; text: string; action?: React.ReactNode }) {
-  return (
-    <header className="pageHeader">
-      <div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{text}</p></div>
-      {action}
-    </header>
-  );
+function PageHeader({ eyebrow, title, text, action }: { eyebrow: string; title: string; text: string; action?: ReactNode }) {
+  return <header className="pageHeader"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{text}</p></div>{action}</header>;
 }
 
 function TodayScreen({ state, persist, onNavigate, setNotice }: {
@@ -64,341 +67,170 @@ function TodayScreen({ state, persist, onNavigate, setNotice }: {
   onNavigate: (screen: Screen) => void;
   setNotice: (message: string) => void;
 }) {
-  const dayKey = getTodayKey();
-  const checkIn = state.checkIns.find((item) => item.date === dayKey);
-  const capacity = checkIn?.capacity ?? "cukup";
-  const today = getTodayItems(state.items, dayKey);
-  const done = getDoneToday(state.items, dayKey);
-  const laterCount = state.items.filter((item) => item.status === "later").length;
+  const todaySteps = getTodaySteps(state.steps);
+  const completedToday = getCompletedToday(state.steps);
+  const totalCompleted = state.steps.filter((step) => step.completedAt).length;
+  const stage = getMascotStage(totalCompleted);
+  const stageProgress = getStageProgress(totalCompleted, stage);
+  const activeGoals = state.goals.filter((goal) => goal.status === "active");
+  const backlog = state.steps.filter((step) => !step.completedAt && !step.scheduledFor && goalById(state, step.goalId)?.status === "active");
+  const [quickGoalId, setQuickGoalId] = useState(activeGoals[0]?.id ?? "");
+  const [quickTitle, setQuickTitle] = useState("");
 
-  async function chooseCapacity(nextCapacity: Capacity) {
-    await persist(service.setCapacity(state, nextCapacity));
-    setNotice(`${capacityCopy[nextCapacity].label} dipilih. Batasmu hari ini: ${capacityCopy[nextCapacity].limit} fokus.`);
+  useEffect(() => {
+    if (!quickGoalId && activeGoals[0]) setQuickGoalId(activeGoals[0].id);
+  }, [activeGoals, quickGoalId]);
+
+  async function complete(step: GoalStep) {
+    await persist(service.completeStep(state, step.id));
+    setNotice("Langkah selesai! Tala ikut tumbuh bersamamu. ✨");
   }
 
-  async function complete(item: AtlasItem) {
-    await persist(replaceItem(state, service.moveItem(item, "done")));
-    setNotice("Satu hal selesai. Tidak perlu buru-buru mengambil yang lain.");
+  async function schedule(step: GoalStep) {
+    await persist(service.scheduleStep(state, step.id));
+    setNotice("Langkah ini sudah dibawa ke hari ini.");
   }
 
-  async function moveLater(item: AtlasItem) {
-    await persist(replaceItem(state, service.moveItem(item, "later")));
-    setNotice("Sudah dipindahkan. Kamu tidak harus membawanya hari ini.");
+  async function addQuick(event: FormEvent) {
+    event.preventDefault();
+    if (!quickGoalId || !quickTitle.trim()) return;
+    await persist(service.addStep(state, quickGoalId, quickTitle, true));
+    setQuickTitle("");
+    setNotice("Langkah kecilmu sudah masuk ke hari ini.");
+  }
+
+  if (!state.goals.length) {
+    return (
+      <div className="pageWrap">
+        <PageHeader eyebrow={formatLongDate()} title={`Halo, ${state.profile.displayName}.`} text="Hari ini kita mulai dari satu tujuan yang benar-benar ingin kamu dekati."/>
+        <section className="firstGoalHero">
+          <div className="firstGoalMascot"><Mascot stage={stage}/></div>
+          <div><p className="sectionKicker">KENALAN DENGAN TALA</p><h2>Ia akan tumbuh setiap kali kamu mengambil langkah nyata.</h2><p>Bukan karena kamu sempurna setiap hari, tetapi karena kamu terus kembali pada tujuanmu.</p><button className="primaryButton" onClick={() => onNavigate("goals")}>Buat goal pertamaku <Icon name="arrow" size={17}/></button></div>
+        </section>
+      </div>
+    );
   }
 
   return (
     <div className="pageWrap">
-      <PageHeader eyebrow={formatLongDate()} title={`Halo, ${state.profile.displayName}.`} text="Kamu tidak perlu mengurus semuanya. Pilih hanya yang paling perlu disentuh hari ini." action={<button className="softButton" onClick={() => onNavigate("dump")}><Icon name="plus" size={17}/> Keluarkan isi kepala</button>} />
+      <PageHeader eyebrow={formatLongDate()} title={`Halo, ${state.profile.displayName}.`} text="Tidak perlu mengerjakan seluruh goal-mu hari ini. Pilih langkah yang membuatmu benar-benar bergerak." action={<button className="softButton" onClick={() => onNavigate("goals")}><Icon name="goal" size={17}/> Kelola goals</button>}/>
 
-      <section className="capacityPanel">
-        <div><p className="sectionKicker">BATAS HARI INI</p><h2>Realistisnya, kamu sanggup memegang berapa hal?</h2></div>
-        <div className="capacityOptions">
-          {capacityOrder.map((item) => (
-            <button key={item} className={capacity === item ? "capacityButton active" : "capacityButton"} onClick={() => void chooseCapacity(item)}>
-              <span>{capacityCopy[item].label}</span><small>{capacityCopy[item].description}</small>
-            </button>
-          ))}
+      <section className="mascotHero">
+        <div className="mascotStage"><Mascot stage={stage} celebrating={completedToday.length > 0}/></div>
+        <div className="mascotCopy">
+          <p className="sectionKicker">TALA · {stage.label.toUpperCase()}</p>
+          <h2>{completedToday.length ? `Yey! ${completedToday.length} langkah selesai hari ini.` : stage.message}</h2>
+          <p>{stage.next === null ? "Tala sudah mencapai tahap tertinggi, tetapi perjalananmu tetap terus bertumbuh." : `${stage.next - totalCompleted} langkah lagi sampai Tala berevolusi ke tahap berikutnya.`}</p>
+          <div className="levelRow"><div className="levelTrack"><span style={{ width: `${stageProgress}%` }}/></div><strong>{totalCompleted} langkah</strong></div>
         </div>
+        <div className="todayScore"><span>{completedToday.length}</span><small>langkah selesai<br/>hari ini</small></div>
       </section>
 
       <div className="dashboardGrid">
-        <section className="card focusCard">
-          <div className="cardHeader">
-            <div><p className="sectionKicker">YANG CUKUP UNTUK HARI INI</p><h2>{today.length ? `${today.length} fokus yang kamu pilih` : "Belum ada yang harus dibawa"}</h2></div>
-            <span className="countPill">{today.length}/{capacityCopy[capacity].limit}</span>
-          </div>
+        <section className="card todayCard">
+          <div className="cardHeader"><div><p className="sectionKicker">LANGKAH HARI INI</p><h2>{todaySteps.length ? `${todaySteps.length} langkah yang sedang dibawa` : "Hari ini masih kosong"}</h2></div><span className="countPill">{todaySteps.length}/3 ideal</span></div>
+          {todaySteps.length ? <div className="todayList">{todaySteps.map((step) => {
+            const goal = goalById(state, step.goalId);
+            return <article className="todayStep" key={step.id}><button className="checkButton" onClick={() => void complete(step)} aria-label={`Selesaikan ${step.title}`}><Icon name="check" size={18}/></button><div><small>{goal?.title ?? "Goal"}</small><p>{step.title}</p></div></article>;
+          })}</div> : <div className="emptyState compact"><span><Icon name="flag" size={27}/></span><h3>Pilih satu langkah kecil.</h3><p>Satu langkah yang selesai lebih berguna daripada daftar panjang yang hanya menunggu.</p></div>}
 
-          {today.length === 0 ? (
-            <div className="emptyState">
-              <span><Icon name="leaf" size={27}/></span>
-              <h3>Mulai dari kepala yang lebih lega.</h3>
-              <p>Keluarkan semuanya dulu. Sesudah itu, kamu hanya akan diminta memilih satu sampai tiga hal. Sisanya otomatis diparkir.</p>
-              <button className="primaryButton" onClick={() => onNavigate("dump")}>Keluarkan isi kepala <Icon name="arrow" size={17}/></button>
-            </div>
-          ) : (
-            <div className="focusList">
-              {today.map((item, index) => (
-                <article className="focusItem" key={item.id}>
-                  <button className="checkButton" onClick={() => void complete(item)} aria-label={`Tandai selesai: ${item.text}`}><Icon name="check" size={18}/></button>
-                  <div><small>Fokus {index + 1}</small><p>{item.text}</p></div>
-                  <button className="iconButton" title="Simpan untuk nanti" onClick={() => void moveLater(item)}><Icon name="later" size={18}/></button>
-                </article>
-              ))}
-            </div>
-          )}
-
-          {today.length > 0 && <p className="permissionLine">Selesai satu pun tetap berarti. Sisanya boleh menunggu.</p>}
+          {activeGoals.length > 0 && <form className="quickStepForm" onSubmit={addQuick}><select value={quickGoalId} onChange={(event) => setQuickGoalId(event.target.value)}>{activeGoals.map((goal) => <option value={goal.id} key={goal.id}>{goal.title}</option>)}</select><input value={quickTitle} onChange={(event) => setQuickTitle(event.target.value)} placeholder="Langkah kecil apa yang bisa dilakukan hari ini?"/><button className="primaryButton" disabled={!quickTitle.trim()}><Icon name="plus" size={16}/> Tambah</button></form>}
         </section>
 
         <aside className="sideStack">
-          <section className="card quietCard">
-            <span className="illustration"><Icon name="spark" size={25}/></span>
-            <p className="sectionKicker">PENGINGAT KECIL</p>
-            <h3>Produktif bukan berarti memuat semuanya.</h3>
-            <p>Hari yang baik adalah hari ketika hal terpenting mendapat ruang—termasuk dirimu.</p>
-          </section>
-          <section className="card miniStats">
-            <button onClick={() => onNavigate("close")}><strong>{done.length}</strong><span>selesai hari ini</span><Icon name="arrow" size={17}/></button>
-            <button onClick={() => onNavigate("later")}><strong>{laterCount}</strong><span>aman disimpan nanti</span><Icon name="arrow" size={17}/></button>
-          </section>
+          <section className="card goalPulse"><p className="sectionKicker">GOAL YANG SEDANG BERJALAN</p>{activeGoals.slice(0, 3).map((goal) => { const progress = getGoalProgress(goal, state.steps); return <div className="miniGoal" key={goal.id}><div><strong>{goal.title}</strong><span>{progress}%</span></div><div className="progressTrack"><span style={{ width: `${progress}%` }}/></div></div>; })}<button className="textButton" onClick={() => onNavigate("goals")}>Lihat semua goals <Icon name="arrow" size={15}/></button></section>
         </aside>
       </div>
+
+      {backlog.length > 0 && <section className="nextStepSection"><div className="sectionHeading"><div><p className="sectionKicker">BUTUH IDE LANGKAH?</p><h2>Ambil dari rencana goal-mu</h2></div><p>Pilih satu saja. Kamu bisa kembali lagi nanti.</p></div><div className="suggestionGrid">{backlog.slice(0, 6).map((step) => <article className="suggestionCard" key={step.id}><small>{goalById(state, step.goalId)?.title}</small><p>{step.title}</p><button onClick={() => void schedule(step)}><Icon name="plus" size={15}/> Bawa hari ini</button></article>)}</div></section>}
     </div>
   );
 }
 
-function DumpScreen({ state, persist, onNavigate, setNotice }: {
-  state: AtlasDailyState;
-  persist: (state: AtlasDailyState) => Promise<void>;
-  onNavigate: (screen: Screen) => void;
-  setNotice: (message: string) => void;
-}) {
-  const [raw, setRaw] = useState("");
-  const [candidates, setCandidates] = useState<AtlasItem[]>(() => state.items.filter((item) => item.status === "inbox"));
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const dayKey = getTodayKey();
-  const capacity = state.checkIns.find((item) => item.date === dayKey)?.capacity ?? "cukup";
-  const todayCount = getTodayItems(state.items, dayKey).length;
-  const remaining = Math.max(0, capacityCopy[capacity].limit - todayCount);
-
-  async function unpack() {
-    const lines = splitBrainDump(raw);
-    if (!lines.length) return;
-    const newItems = service.createItems(lines);
-    const next = { ...state, items: [...newItems, ...state.items] };
-    await persist(next);
-    setCandidates((current) => [...newItems, ...current]);
-    setSelectedIds([]);
-    setRaw("");
-    setNotice(`${newItems.length} hal sudah aman tersimpan. Sekarang pilih sedikit saja yang perlu disentuh hari ini.`);
-    window.setTimeout(() => document.getElementById("clarity-pick")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-  }
-
-  function toggleCandidate(item: AtlasItem) {
-    const isSelected = selectedIds.includes(item.id);
-    if (isSelected) {
-      setSelectedIds((current) => current.filter((id) => id !== item.id));
-      return;
-    }
-    if (selectedIds.length >= remaining) {
-      setNotice(remaining === 0
-        ? "Ruang hari ini sudah penuh. Semua yang baru akan diparkir dengan aman."
-        : `Cukup ${remaining} pilihan. Yang lain tidak hilang—semuanya otomatis diparkir.`);
-      return;
-    }
-    setSelectedIds((current) => [...current, item.id]);
-  }
-
-  async function finishSimplifying() {
-    const candidateIds = new Set(candidates.map((item) => item.id));
-    const selected = new Set(selectedIds);
-    const nextItems = state.items.map((item) => {
-      if (!candidateIds.has(item.id)) return item;
-      return service.moveItem(item, selected.has(item.id) ? "today" : "later");
-    });
-    await persist({ ...state, items: nextItems });
-    setCandidates([]);
-    setSelectedIds([]);
-    setNotice(selected.size > 0
-      ? `${selected.size} hal dipilih untuk hari ini. Sisanya sudah diparkir agar tidak memenuhi kepalamu.`
-      : "Semua sudah diparkir. Hari ini kamu tidak wajib mengambil tugas baru.");
-    onNavigate("today");
-  }
-
-  return (
-    <div className="pageWrap narrowPage">
-      <PageHeader eyebrow="KELUARKAN ISI KEPALA" title="Tumpahkan dulu. Tidak perlu langsung dibereskan." text="Tulis satu hal per baris. Pekerjaan, urusan rumah, ide, kekhawatiran—semuanya boleh keluar." />
-
-      <section className="card dumpComposer">
-        <textarea value={raw} onChange={(event) => setRaw(event.target.value)} placeholder={`Contoh:
-Selesaikan surat untuk besok
-Siapkan bekal anak
-Kepikiran ide produk
-Rumah terasa berantakan`} rows={8} />
-        <div className="composerFooter">
-          <p>Sesudah ini kamu tidak perlu mengelompokkan semuanya. Atlas akan memarkir sisanya secara otomatis.</p>
-          <button className="primaryButton" disabled={!splitBrainDump(raw).length} onClick={() => void unpack()}><Icon name="spark" size={17}/> Sudah, bantu aku memilih</button>
-        </div>
-      </section>
-
-      {candidates.length > 0 && (
-        <section className="sortingSection" id="clarity-pick">
-          <div className="clarityIntro">
-            <span className="clarityIcon"><Icon name="check" size={20}/></span>
-            <div><strong>Semua sudah aman tersimpan.</strong><p>Kamu tidak perlu memutuskan nasib setiap hal sekarang.</p></div>
-          </div>
-
-          <div className="sortingHeader">
-            <div><p className="sectionKicker">SATU PERTANYAAN SAJA</p><h2>Mana yang kalau tidak disentuh hari ini akan membuat besok lebih berat?</h2></div>
-            <span className="remainingPill">Pilih maksimal {remaining}</span>
-          </div>
-          <p className="sortingHelp">Klik hanya yang benar-benar perlu dipegang hari ini. Yang tidak dipilih otomatis masuk ke ruang Parkir.</p>
-
-          <div className="pickList">
-            {candidates.map((item) => {
-              const selected = selectedIds.includes(item.id);
-              return (
-                <button type="button" className={selected ? "pickItem selected" : "pickItem"} key={item.id} onClick={() => toggleCandidate(item)} aria-pressed={selected}>
-                  <span className="pickCheck">{selected ? <Icon name="check" size={17}/> : null}</span>
-                  <span>{item.text}</span>
-                  <small>{selected ? "Dipegang hari ini" : "Aman diparkir"}</small>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="selectionSummary">
-            <p><strong>{selectedIds.length}</strong> dipilih untuk hari ini. <span>{candidates.length - selectedIds.length} lainnya akan diparkir otomatis.</span></p>
-            <button className="primaryButton" onClick={() => void finishSimplifying()}>
-              {selectedIds.length > 0 ? "Tampilkan hari yang sudah disederhanakan" : "Parkir semuanya untuk nanti"}
-              <Icon name="arrow" size={17}/>
-            </button>
-          </div>
-        </section>
-      )}
-    </div>
-  );
-}
-
-function LaterScreen({ state, persist, setNotice }: {
+function GoalsScreen({ state, persist, setNotice }: {
   state: AtlasDailyState;
   persist: (state: AtlasDailyState) => Promise<void>;
   setNotice: (message: string) => void;
 }) {
-  const later = state.items.filter((item) => item.status === "later").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const dayKey = getTodayKey();
-  const capacity = state.checkIns.find((item) => item.date === dayKey)?.capacity ?? "cukup";
-  const remaining = Math.max(0, capacityCopy[capacity].limit - getTodayItems(state.items, dayKey).length);
+  const [showCreate, setShowCreate] = useState(state.goals.length === 0);
+  const [title, setTitle] = useState("");
+  const [why, setWhy] = useState("");
+  const [targetDate, setTargetDate] = useState("");
+  const [stepsRaw, setStepsRaw] = useState("");
+  const [newStep, setNewStep] = useState<Record<string, string>>({});
 
-  async function move(item: AtlasItem, status: "today" | "released") {
-    if (status === "today" && remaining <= 0) {
-      setNotice("Ruang hari ini sudah cukup. Ambil ini setelah salah satu fokus selesai atau besok.");
-      return;
-    }
-    await persist(replaceItem(state, service.moveItem(item, status)));
-    setNotice(status === "today" ? "Dibawa ke hari ini." : "Sudah dilepaskan dari daftar.");
+  async function createGoal(event: FormEvent) {
+    event.preventDefault();
+    if (!title.trim()) return;
+    const steps = stepsRaw.split(/\n|;/).map((item) => item.trim()).filter(Boolean);
+    await persist(service.createGoal(state, { title, why, targetDate, steps }));
+    setTitle(""); setWhy(""); setTargetDate(""); setStepsRaw(""); setShowCreate(false);
+    setNotice("Goal dibuat. Sekarang ia punya jalan yang bisa kamu tempuh sedikit demi sedikit.");
+  }
+
+  async function addStep(goalId: string) {
+    const value = newStep[goalId]?.trim();
+    if (!value) return;
+    await persist(service.addStep(state, goalId, value));
+    setNewStep((current) => ({ ...current, [goalId]: "" }));
+    setNotice("Langkah baru ditambahkan.");
+  }
+
+  async function toggleStep(step: GoalStep) {
+    await persist(service.completeStep(state, step.id));
+    setNotice(step.completedAt ? "Langkah dibuka kembali." : "Progres bertambah! Tala senang melihatmu bergerak.");
+  }
+
+  async function schedule(step: GoalStep) {
+    await persist(service.scheduleStep(state, step.id, step.scheduledFor !== getTodayKey()));
+    setNotice(step.scheduledFor === getTodayKey() ? "Langkah dikeluarkan dari hari ini." : "Langkah dibawa ke hari ini.");
+  }
+
+  async function changeStatus(goal: Goal) {
+    const next = goal.status === "paused" ? "active" : "paused";
+    await persist(service.updateGoalStatus(state, goal.id, next));
+    setNotice(next === "paused" ? "Goal dijeda. Tidak hilang, hanya tidak sedang dikejar." : "Goal aktif kembali.");
   }
 
   return (
-    <div className="pageWrap narrowPage">
-      <PageHeader eyebrow="SIMPAN UNTUK NANTI" title="Tidak hilang. Hanya tidak perlu dipikirkan sekarang." text="Ruang ini menjaga hal-hal penting tanpa memaksanya masuk ke hari ini." />
-      <section className="card listCard">
-        {later.length === 0 ? <div className="emptyState compact"><span><Icon name="later" size={27}/></span><h3>Ruang nanti masih kosong.</h3><p>Saat kamu menunda sesuatu dengan sadar, hal itu akan aman muncul di sini.</p></div> : (
-          <div className="laterList">
-            {later.map((item) => (
-              <article className="laterItem" key={item.id}>
-                <div><p>{item.text}</p><small>Disimpan {new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short" }).format(new Date(item.updatedAt))}</small></div>
-                <div className="rowActions">
-                  <button onClick={() => void move(item, "today")} disabled={remaining <= 0}><Icon name="today" size={16}/> Bawa hari ini</button>
-                  <button className="ghostDanger" onClick={() => void move(item, "released")}><Icon name="trash" size={16}/> Lepaskan</button>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+    <div className="pageWrap">
+      <PageHeader eyebrow="GOALS" title="Arah yang ingin kamu dekati." text="Goal bukan daftar harapan. Di sini setiap goal punya langkah nyata yang bisa dibawa ke hari ini." action={<button className="primaryButton" onClick={() => setShowCreate((value) => !value)}><Icon name="plus" size={17}/> Goal baru</button>}/>
+
+      {showCreate && <form className="card goalForm" onSubmit={createGoal}><div className="formHeader"><div><p className="sectionKicker">GOAL BARU</p><h2>Apa yang ingin benar-benar kamu wujudkan?</h2></div></div><label>Nama goal<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Contoh: Lulus UKOM dengan hasil terbaik" autoFocus/></label><div className="formTwo"><label>Kenapa ini penting?<input value={why} onChange={(event) => setWhy(event.target.value)} placeholder="Alasan yang ingin kamu ingat"/></label><label>Target waktu, opsional<input type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)}/></label></div><label>Langkah awal, satu per baris<textarea rows={5} value={stepsRaw} onChange={(event) => setStepsRaw(event.target.value)} placeholder={`Baca kisi-kisi terbaru\nLatihan 30 soal\nReview materi yang masih lemah`}/></label><div className="formFooter"><p>Tidak harus lengkap. Langkah baru bisa ditambahkan kapan saja.</p><button className="primaryButton" disabled={!title.trim()}>Buat goal <Icon name="arrow" size={16}/></button></div></form>}
+
+      <div className="goalGrid">{state.goals.map((goal) => {
+        const steps = getGoalSteps(state.steps, goal.id);
+        const progress = getGoalProgress(goal, state.steps);
+        return <article className={`card goalCard ${goal.status}`} key={goal.id}>
+          <div className="goalCardTop"><div><div className="goalStatus"><span/>{goal.status === "active" ? "Aktif" : goal.status === "paused" ? "Dijeda" : "Selesai"}</div><h2>{goal.title}</h2>{goal.why && <p>{goal.why}</p>}</div><strong className="goalPercent">{progress}%</strong></div>
+          <div className="progressTrack large"><span style={{ width: `${progress}%` }}/></div>
+          <div className="goalMeta"><span>{steps.filter((step) => step.completedAt).length}/{steps.length} langkah selesai</span>{goal.targetDate && <span><Icon name="calendar" size={14}/> {new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${goal.targetDate}T00:00:00`))}</span>}</div>
+          <div className="stepList">{steps.length ? steps.map((step) => <div className={`goalStep ${step.completedAt ? "done" : ""}`} key={step.id}><button className="smallCheck" onClick={() => void toggleStep(step)}><Icon name="check" size={14}/></button><span>{step.title}</span>{!step.completedAt && <button className={step.scheduledFor === getTodayKey() ? "scheduleButton active" : "scheduleButton"} onClick={() => void schedule(step)}>{step.scheduledFor === getTodayKey() ? "Hari ini" : "+ Hari ini"}</button>}</div>) : <p className="noSteps">Belum ada langkah. Tambahkan satu langkah terkecil yang bisa dilakukan.</p>}</div>
+          <div className="addStepRow"><input value={newStep[goal.id] ?? ""} onChange={(event) => setNewStep((current) => ({ ...current, [goal.id]: event.target.value }))} placeholder="Tambahkan langkah berikutnya" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void addStep(goal.id); } }}/><button onClick={() => void addStep(goal.id)} disabled={!newStep[goal.id]?.trim()}><Icon name="plus" size={16}/></button></div>
+          {goal.status !== "completed" && <button className="goalPause" onClick={() => void changeStatus(goal)}><Icon name={goal.status === "paused" ? "play" : "pause"} size={15}/>{goal.status === "paused" ? "Aktifkan kembali" : "Jeda goal"}</button>}
+        </article>;
+      })}</div>
     </div>
   );
 }
 
-function CloseDayScreen({ state, persist, setNotice }: {
-  state: AtlasDailyState;
-  persist: (state: AtlasDailyState) => Promise<void>;
-  setNotice: (message: string) => void;
-}) {
-  const dayKey = getTodayKey();
-  const done = getDoneToday(state.items, dayKey);
-  const unfinished = getTodayItems(state.items, dayKey);
-  const checkIn = state.checkIns.find((item) => item.date === dayKey);
-  const [note, setNote] = useState(checkIn?.enoughNote ?? "");
-
-  async function decide(item: AtlasItem, status: "later" | "released") {
-    await persist(replaceItem(state, service.moveItem(item, status)));
-    setNotice(status === "later" ? "Disimpan untuk nanti. Hari ini boleh ditutup." : "Dilepaskan tanpa utang rasa bersalah.");
-  }
-
-  async function saveNote() {
-    await persist(service.setEnoughNote(state, note));
-    setNotice("Hari ini sudah ditutup dengan lembut.");
-  }
-
-  return (
-    <div className="pageWrap narrowPage">
-      <PageHeader eyebrow="TUTUP HARI" title="Sebelum beristirahat, rapikan beban—bukan hidupmu." text="Yang selesai kita akui. Yang belum selesai cukup diputuskan tempatnya." />
-
-      <section className="closingSummary">
-        <div className="summaryNumber"><strong>{done.length}</strong><span>hal selesai hari ini</span></div>
-        <div className="summaryWords"><Icon name="spark" size={22}/><p>{done.length === 0 ? "Bertahan dan hadir juga bagian dari perjalanan." : done.length === 1 ? "Satu hal sungguh-sungguh selesai lebih berarti daripada banyak hal setengah jalan." : "Kamu sudah bergerak. Tidak perlu mengecilkan progresmu."}</p></div>
-      </section>
-
-      {unfinished.length > 0 && (
-        <section className="card unfinishedCard">
-          <div className="cardHeader"><div><p className="sectionKicker">YANG BELUM SELESAI</p><h2>Tidak perlu otomatis menjadi utang besok.</h2></div></div>
-          <div className="unfinishedList">
-            {unfinished.map((item) => (
-              <article key={item.id}><p>{item.text}</p><div><button onClick={() => void decide(item, "later")}><Icon name="later" size={16}/> Simpan nanti</button><button onClick={() => void decide(item, "released")}><Icon name="trash" size={16}/> Lepaskan</button></div></article>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="card enoughCard">
-        <p className="sectionKicker">SATU KALIMAT SAJA</p>
-        <h2>Apa yang sudah cukup hari ini?</h2>
-        <textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Contoh: Aku menyelesaikan yang paling penting dan hadir untuk keluargaku." />
-        <div className="enoughFooter"><p>Tidak wajib panjang. Bahkan boleh dikosongkan.</p><button className="primaryButton" onClick={() => void saveNote()}>Tutup hari ini <Icon name="check" size={17}/></button></div>
-      </section>
-    </div>
-  );
+function JourneyScreen({ state }: { state: AtlasDailyState }) {
+  const completed = state.steps.filter((step) => step.completedAt).sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? ""));
+  const stage = getMascotStage(completed.length);
+  return <div className="pageWrap"><PageHeader eyebrow="PERJALANAN" title="Progres yang benar-benar sudah terjadi." text="Bukan streak sempurna. Ini jejak langkah yang sudah kamu ambil menuju hidup yang kamu inginkan."/>
+    <section className="journeyHero"><div><Mascot stage={stage} celebrating={completed.length > 0}/></div><div><p className="sectionKicker">TALA SEKARANG</p><h2>{stage.label}</h2><p>{stage.message}</p><strong>{completed.length} langkah nyata telah diselesaikan</strong></div></section>
+    <section className="evolutionSection"><div className="sectionHeading"><div><p className="sectionKicker">EVOLUSI TALA</p><h2>Tumbuh bersama progresmu</h2></div></div><div className="evolutionGrid">{mascotStages.map((item) => { const unlocked = completed.length >= item.min; return <article className={unlocked ? "evolutionCard unlocked" : "evolutionCard"} key={item.id}><div className="miniMascot"><Mascot stage={item}/></div><strong>{item.label}</strong><span>{item.min === 0 ? "Mulai perjalanan" : `${item.min} langkah selesai`}</span></article>; })}</div></section>
+    <section className="card historyCard"><div className="cardHeader"><div><p className="sectionKicker">JEJAK LANGKAH</p><h2>Yang sudah kamu wujudkan</h2></div></div>{completed.length ? <div className="historyList">{completed.map((step) => <article key={step.id}><span><Icon name="check" size={15}/></span><div><strong>{step.title}</strong><small>{goalById(state, step.goalId)?.title} · {new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric" }).format(new Date(step.completedAt!))}</small></div></article>)}</div> : <div className="emptyState compact"><span><Icon name="journey" size={27}/></span><h3>Jejakmu akan muncul di sini.</h3><p>Selesaikan satu langkah kecil, lalu perjalananmu mulai terlihat.</p></div>}</section>
+  </div>;
 }
 
-function DataScreen({ state, persist, onReset }: {
-  state: AtlasDailyState;
-  persist: (state: AtlasDailyState) => Promise<void>;
-  onReset: () => void;
-}) {
+function DataScreen({ state, persist, onReset }: { state: AtlasDailyState; persist: (state: AtlasDailyState) => Promise<void>; onReset: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState("");
-
-  function download() {
-    const blob = service.exportState(state);
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `atlas-daily-${getTodayKey()}.atlasdaily.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    setMessage("Cadangan data sudah diunduh.");
-  }
-
-  async function importFile(file?: File) {
-    if (!file) return;
-    try {
-      const imported = await service.importState(await file.text());
-      await persist(imported);
-      setMessage("Data berhasil dipulihkan.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Data gagal dipulihkan.");
-    }
-  }
-
-  async function reset() {
-    if (!window.confirm("Hapus seluruh data Atlas Daily di perangkat ini? Tindakan ini tidak dapat dibatalkan.")) return;
-    await service.clear();
-    onReset();
-  }
-
-  return (
-    <div className="pageWrap narrowPage">
-      <PageHeader eyebrow="DATA SAYA" title="Kamu tetap memegang kendali atas datamu." text="Versi ini menyimpan data di browser perangkat. Unduh cadangan sebelum membersihkan browser atau pindah perangkat." />
-      {message && <div className="notice inline"><Icon name="spark" size={18}/><span>{message}</span></div>}
-      <section className="dataGrid">
-        <article className="card dataCard"><span><Icon name="data" size={24}/></span><h2>Unduh cadangan</h2><p>Simpan seluruh isi Atlas Daily dalam satu berkas yang bisa kamu pegang sendiri.</p><button className="primaryButton" onClick={download}>Unduh data</button></article>
-        <article className="card dataCard"><span><Icon name="undo" size={24}/></span><h2>Pulihkan data</h2><p>Pilih berkas cadangan Atlas Daily yang pernah kamu unduh.</p><input ref={fileRef} type="file" accept=".json,.atlasdaily" hidden onChange={(event) => void importFile(event.target.files?.[0])}/><button className="softButton" onClick={() => fileRef.current?.click()}>Pilih berkas</button></article>
-      </section>
-      <section className="dangerZone"><div><h3>Mulai ulang Atlas Daily</h3><p>Menghapus seluruh data lokal di perangkat ini.</p></div><button onClick={() => void reset()}>Hapus seluruh data</button></section>
-    </div>
-  );
+  function download() { const blob = service.exportState(state); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `atlas-daily-${getTodayKey()}.atlasdaily.json`; anchor.click(); URL.revokeObjectURL(url); setMessage("Cadangan data sudah diunduh."); }
+  async function importFile(file?: File) { if (!file) return; try { const imported = await service.importState(await file.text()); await persist(imported); setMessage("Data berhasil dipulihkan."); } catch (error) { setMessage(error instanceof Error ? error.message : "Data gagal dipulihkan."); } }
+  async function reset() { if (!window.confirm("Hapus seluruh data Atlas Daily di perangkat ini?")) return; await service.clear(); onReset(); }
+  return <div className="pageWrap narrowPage"><PageHeader eyebrow="DATA SAYA" title="Kamu tetap memegang kendali atas datamu." text="Versi ini menyimpan goals dan progres di browser perangkatmu."/>{message && <div className="notice inline"><Icon name="spark" size={18}/><span>{message}</span></div>}<section className="dataGrid"><article className="card dataCard"><span><Icon name="data" size={24}/></span><h2>Unduh cadangan</h2><p>Simpan goals, langkah, dan perjalananmu dalam satu berkas.</p><button className="primaryButton" onClick={download}>Unduh data</button></article><article className="card dataCard"><span><Icon name="undo" size={24}/></span><h2>Pulihkan data</h2><p>Pilih berkas cadangan Atlas Daily yang pernah diunduh.</p><input ref={fileRef} type="file" accept=".json,.atlasdaily" hidden onChange={(event) => void importFile(event.target.files?.[0])}/><button className="softButton" onClick={() => fileRef.current?.click()}>Pilih berkas</button></article></section><section className="dangerZone"><div><h3>Mulai ulang Atlas Daily</h3><p>Menghapus seluruh data lokal di perangkat ini.</p></div><button onClick={() => void reset()}>Hapus seluruh data</button></section></div>;
 }
 
 export default App;
