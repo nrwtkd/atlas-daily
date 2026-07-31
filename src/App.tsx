@@ -88,10 +88,10 @@ function TodayScreen({ state, persist, onNavigate, setNotice }: {
 
   return (
     <div className="pageWrap">
-      <PageHeader eyebrow={formatLongDate()} title={`Halo, ${state.profile.displayName}.`} text="Mari lihat apa yang benar-benar perlu kamu pegang hari ini." action={<button className="softButton" onClick={() => onNavigate("dump")}><Icon name="plus" size={17}/> Tuangkan isi kepala</button>} />
+      <PageHeader eyebrow={formatLongDate()} title={`Halo, ${state.profile.displayName}.`} text="Kamu tidak perlu mengurus semuanya. Pilih hanya yang paling perlu disentuh hari ini." action={<button className="softButton" onClick={() => onNavigate("dump")}><Icon name="plus" size={17}/> Keluarkan isi kepala</button>} />
 
       <section className="capacityPanel">
-        <div><p className="sectionKicker">KAPASITASKU HARI INI</p><h2>Seberapa banyak ruang yang kamu punya?</h2></div>
+        <div><p className="sectionKicker">BATAS HARI INI</p><h2>Realistisnya, kamu sanggup memegang berapa hal?</h2></div>
         <div className="capacityOptions">
           {capacityOrder.map((item) => (
             <button key={item} className={capacity === item ? "capacityButton active" : "capacityButton"} onClick={() => void chooseCapacity(item)}>
@@ -112,8 +112,8 @@ function TodayScreen({ state, persist, onNavigate, setNotice }: {
             <div className="emptyState">
               <span><Icon name="leaf" size={27}/></span>
               <h3>Mulai dari kepala yang lebih lega.</h3>
-              <p>Tuangkan semuanya dulu. Kamu tidak perlu langsung tahu mana yang paling penting.</p>
-              <button className="primaryButton" onClick={() => onNavigate("dump")}>Mulai menuangkan <Icon name="arrow" size={17}/></button>
+              <p>Keluarkan semuanya dulu. Sesudah itu, kamu hanya akan diminta memilih satu sampai tiga hal. Sisanya otomatis diparkir.</p>
+              <button className="primaryButton" onClick={() => onNavigate("dump")}>Keluarkan isi kepala <Icon name="arrow" size={17}/></button>
             </div>
           ) : (
             <div className="focusList">
@@ -154,7 +154,8 @@ function DumpScreen({ state, persist, onNavigate, setNotice }: {
   setNotice: (message: string) => void;
 }) {
   const [raw, setRaw] = useState("");
-  const [drafts, setDrafts] = useState<AtlasItem[]>(() => state.items.filter((item) => item.status === "inbox"));
+  const [candidates, setCandidates] = useState<AtlasItem[]>(() => state.items.filter((item) => item.status === "inbox"));
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const dayKey = getTodayKey();
   const capacity = state.checkIns.find((item) => item.date === dayKey)?.capacity ?? "cukup";
   const todayCount = getTodayItems(state.items, dayKey).length;
@@ -166,52 +167,93 @@ function DumpScreen({ state, persist, onNavigate, setNotice }: {
     const newItems = service.createItems(lines);
     const next = { ...state, items: [...newItems, ...state.items] };
     await persist(next);
-    setDrafts((current) => [...newItems, ...current]);
+    setCandidates((current) => [...newItems, ...current]);
+    setSelectedIds([]);
     setRaw("");
-    setNotice(`${newItems.length} hal sudah keluar dari kepalamu. Sekarang cukup putuskan tempatnya.`);
+    setNotice(`${newItems.length} hal sudah aman tersimpan. Sekarang pilih sedikit saja yang perlu disentuh hari ini.`);
+    window.setTimeout(() => document.getElementById("clarity-pick")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   }
 
-  async function decide(item: AtlasItem, status: "today" | "later" | "released") {
-    if (status === "today" && remaining <= 0) {
-      setNotice(`Batas hari ini sudah penuh. Simpan hal ini untuk nanti—bukan berarti tidak penting.`);
+  function toggleCandidate(item: AtlasItem) {
+    const isSelected = selectedIds.includes(item.id);
+    if (isSelected) {
+      setSelectedIds((current) => current.filter((id) => id !== item.id));
       return;
     }
-    const moved = service.moveItem(item, status);
-    await persist(replaceItem(state, moved));
-    setDrafts((current) => current.filter((draft) => draft.id !== item.id));
-    setNotice(status === "today" ? "Dipilih untuk hari ini." : status === "later" ? "Aman disimpan untuk nanti." : "Dilepaskan. Tidak semua hal harus menjadi tugas.");
+    if (selectedIds.length >= remaining) {
+      setNotice(remaining === 0
+        ? "Ruang hari ini sudah penuh. Semua yang baru akan diparkir dengan aman."
+        : `Cukup ${remaining} pilihan. Yang lain tidak hilang—semuanya otomatis diparkir.`);
+      return;
+    }
+    setSelectedIds((current) => [...current, item.id]);
   }
 
-  const unresolved = drafts.filter((draft) => state.items.some((item) => item.id === draft.id && item.status === "inbox"));
+  async function finishSimplifying() {
+    const candidateIds = new Set(candidates.map((item) => item.id));
+    const selected = new Set(selectedIds);
+    const nextItems = state.items.map((item) => {
+      if (!candidateIds.has(item.id)) return item;
+      return service.moveItem(item, selected.has(item.id) ? "today" : "later");
+    });
+    await persist({ ...state, items: nextItems });
+    setCandidates([]);
+    setSelectedIds([]);
+    setNotice(selected.size > 0
+      ? `${selected.size} hal dipilih untuk hari ini. Sisanya sudah diparkir agar tidak memenuhi kepalamu.`
+      : "Semua sudah diparkir. Hari ini kamu tidak wajib mengambil tugas baru.");
+    onNavigate("today");
+  }
 
   return (
     <div className="pageWrap narrowPage">
-      <PageHeader eyebrow="TUANGKAN" title="Tidak perlu rapi. Keluarkan saja dulu." text="Tulis satu hal per baris. Jadwal, ide, kekhawatiran, pekerjaan rumah—semuanya boleh masuk." />
+      <PageHeader eyebrow="KELUARKAN ISI KEPALA" title="Tumpahkan dulu. Tidak perlu langsung dibereskan." text="Tulis satu hal per baris. Pekerjaan, urusan rumah, ide, kekhawatiran—semuanya boleh keluar." />
 
       <section className="card dumpComposer">
-        <textarea value={raw} onChange={(event) => setRaw(event.target.value)} placeholder={`Contoh:\nSelesaikan surat untuk besok\nSiapkan bekal anak\nKepikiran ide produk\nRumah terasa berantakan`} rows={8} />
+        <textarea value={raw} onChange={(event) => setRaw(event.target.value)} placeholder={`Contoh:
+Selesaikan surat untuk besok
+Siapkan bekal anak
+Kepikiran ide produk
+Rumah terasa berantakan`} rows={8} />
         <div className="composerFooter">
-          <p>Atlas belum menilai apa pun. Ini hanya tempat menurunkan beban dari kepala.</p>
-          <button className="primaryButton" disabled={!splitBrainDump(raw).length} onClick={() => void unpack()}><Icon name="spark" size={17}/> Urai isi kepalaku</button>
+          <p>Sesudah ini kamu tidak perlu mengelompokkan semuanya. Atlas akan memarkir sisanya secara otomatis.</p>
+          <button className="primaryButton" disabled={!splitBrainDump(raw).length} onClick={() => void unpack()}><Icon name="spark" size={17}/> Sudah, bantu aku memilih</button>
         </div>
       </section>
 
-      {unresolved.length > 0 && (
-        <section className="sortingSection">
-          <div className="sortingHeader"><div><p className="sectionKicker">PUTUSKAN SEKALI SAJA</p><h2>Ke mana hal-hal ini perlu ditempatkan?</h2></div><span className="remainingPill">Sisa ruang hari ini: {remaining}</span></div>
-          <div className="sortingList">
-            {unresolved.map((item) => (
-              <article className="sortItem" key={item.id}>
-                <p>{item.text}</p>
-                <div className="decisionButtons">
-                  <button onClick={() => void decide(item, "today")} disabled={remaining <= 0}><Icon name="today" size={16}/> Hari ini</button>
-                  <button onClick={() => void decide(item, "later")}><Icon name="later" size={16}/> Nanti</button>
-                  <button onClick={() => void decide(item, "released")}><Icon name="trash" size={16}/> Lepaskan</button>
-                </div>
-              </article>
-            ))}
+      {candidates.length > 0 && (
+        <section className="sortingSection" id="clarity-pick">
+          <div className="clarityIntro">
+            <span className="clarityIcon"><Icon name="check" size={20}/></span>
+            <div><strong>Semua sudah aman tersimpan.</strong><p>Kamu tidak perlu memutuskan nasib setiap hal sekarang.</p></div>
           </div>
-          <div className="sortFinish"><button className="softButton" onClick={() => onNavigate("today")}>Lihat hari yang sudah disederhanakan <Icon name="arrow" size={17}/></button></div>
+
+          <div className="sortingHeader">
+            <div><p className="sectionKicker">SATU PERTANYAAN SAJA</p><h2>Mana yang kalau tidak disentuh hari ini akan membuat besok lebih berat?</h2></div>
+            <span className="remainingPill">Pilih maksimal {remaining}</span>
+          </div>
+          <p className="sortingHelp">Klik hanya yang benar-benar perlu dipegang hari ini. Yang tidak dipilih otomatis masuk ke ruang Parkir.</p>
+
+          <div className="pickList">
+            {candidates.map((item) => {
+              const selected = selectedIds.includes(item.id);
+              return (
+                <button type="button" className={selected ? "pickItem selected" : "pickItem"} key={item.id} onClick={() => toggleCandidate(item)} aria-pressed={selected}>
+                  <span className="pickCheck">{selected ? <Icon name="check" size={17}/> : null}</span>
+                  <span>{item.text}</span>
+                  <small>{selected ? "Dipegang hari ini" : "Aman diparkir"}</small>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="selectionSummary">
+            <p><strong>{selectedIds.length}</strong> dipilih untuk hari ini. <span>{candidates.length - selectedIds.length} lainnya akan diparkir otomatis.</span></p>
+            <button className="primaryButton" onClick={() => void finishSimplifying()}>
+              {selectedIds.length > 0 ? "Tampilkan hari yang sudah disederhanakan" : "Parkir semuanya untuk nanti"}
+              <Icon name="arrow" size={17}/>
+            </button>
+          </div>
         </section>
       )}
     </div>

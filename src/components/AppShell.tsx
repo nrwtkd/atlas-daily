@@ -4,8 +4,8 @@ import Icon from "./Icon";
 
 const navItems: Array<{ id: Screen; label: string; icon: "today" | "dump" | "later" | "close" | "data" }> = [
   { id: "today", label: "Hari Ini", icon: "today" },
-  { id: "dump", label: "Tuangkan", icon: "dump" },
-  { id: "later", label: "Nanti", icon: "later" },
+  { id: "dump", label: "Keluarkan Isi Kepala", icon: "dump" },
+  { id: "later", label: "Parkir", icon: "later" },
   { id: "close", label: "Tutup Hari", icon: "close" },
   { id: "data", label: "Data Saya", icon: "data" }
 ];

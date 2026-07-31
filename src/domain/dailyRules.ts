@@ -2,18 +2,18 @@ import type { AtlasItem, Capacity } from "./types";
 
 export const capacityCopy: Record<Capacity, { label: string; description: string; limit: number }> = {
   tipis: {
-    label: "Energi tipis",
-    description: "Satu hal penting sudah cukup.",
+    label: "Cuma sanggup 1 hal",
+    description: "Hari berat. Jaga yang paling penting saja.",
     limit: 1
   },
   cukup: {
-    label: "Energi cukup",
-    description: "Pegang paling banyak tiga fokus.",
+    label: "Sanggup 2–3 hal",
+    description: "Pilih beberapa, jangan membawa semuanya.",
     limit: 3
   },
   lapang: {
-    label: "Energi lapang",
-    description: "Tetap tiga fokus; sisanya bonus, bukan kewajiban.",
+    label: "Lagi cukup lega",
+    description: "Tetap batasi tiga agar kepala tidak penuh lagi.",
     limit: 3
   }
 };

@@ -204,3 +204,27 @@ input:focus, textarea:focus { border-color: #8da393; box-shadow: 0 0 0 4px rgba(
   .onboardingCard { padding: 32px 25px; border-radius: 25px; }
   .notice { left: 14px; right: 14px; top: 12px; }
 }
+
+.clarityIntro { margin-bottom: 22px; padding: 16px 18px; border: 1px solid #d7e3d6; background: var(--sage); border-radius: 17px; display: flex; align-items: center; gap: 13px; }
+.clarityIcon { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: var(--green); color: white; flex: none; }
+.clarityIntro strong { display: block; font-size: 15px; }
+.clarityIntro p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+.sortingHelp { color: var(--muted); line-height: 1.55; margin: -4px 0 15px; }
+.pickList { display: grid; gap: 10px; }
+.pickItem { width: 100%; border: 1px solid var(--line); background: var(--paper); border-radius: 17px; padding: 16px 18px; display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 12px; text-align: left; color: var(--ink); }
+.pickItem:hover { border-color: #a9b8ab; background: #fbfcf8; }
+.pickItem.selected { border-color: #7f9985; background: var(--sage); box-shadow: 0 0 0 3px rgba(82,114,93,.07); }
+.pickCheck { width: 28px; height: 28px; border: 1.5px solid #a3b0a5; border-radius: 50%; display: grid; place-items: center; color: white; background: white; }
+.pickItem.selected .pickCheck { border-color: var(--green); background: var(--green); }
+.pickItem > span:nth-child(2) { font-weight: 680; line-height: 1.45; }
+.pickItem small { color: var(--muted); font-size: 11px; font-weight: 750; }
+.selectionSummary { margin-top: 18px; padding: 17px 18px; border-radius: 17px; background: #fffefa; border: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.selectionSummary p { margin: 0; color: var(--ink); }
+.selectionSummary p span { color: var(--muted); }
+
+@media (max-width: 720px) {
+  .pickItem { grid-template-columns: 32px 1fr; }
+  .pickItem small { grid-column: 2; }
+  .selectionSummary { align-items: stretch; flex-direction: column; }
+  .selectionSummary .primaryButton { width: 100%; }
+}
