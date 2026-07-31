@@ -1,5 +1,5 @@
-import { getTodayKey } from "../domain/dailyRules";
-import type { AtlasDailyState, AtlasItem, Capacity, DailyCheckIn, ImportEnvelope, ItemStatus } from "../domain/types";
+import { getGoalSteps, getTodayKey } from "../domain/dailyRules";
+import type { AtlasDailyState, Goal, GoalStep, ImportEnvelope } from "../domain/types";
 import type { AtlasDailyRepository } from "../storage/repository";
 
 function now(): string {
@@ -13,7 +13,7 @@ function makeId(prefix: string): string {
 function assertState(input: unknown): asserts input is AtlasDailyState {
   if (!input || typeof input !== "object") throw new Error("Berkas tidak berisi data Atlas Daily.");
   const candidate = input as Partial<AtlasDailyState>;
-  if (candidate.schemaVersion !== 1 || !candidate.profile || !Array.isArray(candidate.items) || !Array.isArray(candidate.checkIns)) {
+  if (candidate.schemaVersion !== 2 || !candidate.profile || !Array.isArray(candidate.goals) || !Array.isArray(candidate.steps)) {
     throw new Error("Format data Atlas Daily belum dikenali.");
   }
 }
@@ -22,21 +22,41 @@ export class AtlasDailyService {
   constructor(private readonly repository: AtlasDailyRepository) {}
 
   async load(): Promise<AtlasDailyState | null> {
-    return this.repository.load();
+    const loaded = await this.repository.load();
+    if (!loaded) return null;
+    if ((loaded as AtlasDailyState).schemaVersion === 2 && Array.isArray((loaded as AtlasDailyState).goals)) return loaded;
+
+    const legacy = loaded as unknown as { profile?: AtlasDailyState["profile"] };
+    const timestamp = now();
+    const migrated: AtlasDailyState = {
+      schemaVersion: 2,
+      profile: legacy.profile ?? {
+        localProfileId: makeId("profile"),
+        displayName: "Kamu",
+        createdAt: timestamp,
+        updatedAt: timestamp
+      },
+      goals: [],
+      steps: [],
+      lastUpdatedAt: timestamp,
+      syncMetadata: {}
+    };
+    await this.repository.save(migrated);
+    return migrated;
   }
 
   async createProfile(displayName: string): Promise<AtlasDailyState> {
     const timestamp = now();
     const state: AtlasDailyState = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       profile: {
         localProfileId: makeId("profile"),
         displayName: displayName.trim() || "Kamu",
         createdAt: timestamp,
         updatedAt: timestamp
       },
-      items: [],
-      checkIns: [],
+      goals: [],
+      steps: [],
       lastUpdatedAt: timestamp,
       syncMetadata: {}
     };
@@ -50,68 +70,90 @@ export class AtlasDailyService {
     return updated;
   }
 
-  createItems(lines: string[]): AtlasItem[] {
+  createGoal(state: AtlasDailyState, input: { title: string; why: string; targetDate?: string; steps: string[] }): AtlasDailyState {
     const timestamp = now();
-    return lines.map((text) => ({
-      id: makeId("item"),
-      text,
-      status: "inbox",
+    const goal: Goal = {
+      id: makeId("goal"),
+      title: input.title.trim(),
+      why: input.why.trim(),
+      targetDate: input.targetDate || undefined,
+      status: "active",
       createdAt: timestamp,
-      updatedAt: timestamp,
-      source: "brain-dump"
+      updatedAt: timestamp
+    };
+    const steps: GoalStep[] = input.steps.filter(Boolean).map((title) => ({
+      id: makeId("step"),
+      goalId: goal.id,
+      title: title.trim(),
+      createdAt: timestamp,
+      updatedAt: timestamp
     }));
+    return { ...state, goals: [goal, ...state.goals], steps: [...steps, ...state.steps] };
   }
 
-  moveItem(item: AtlasItem, status: ItemStatus): AtlasItem {
+  addStep(state: AtlasDailyState, goalId: string, title: string, scheduleToday = false): AtlasDailyState {
     const timestamp = now();
-    const dayKey = getTodayKey();
+    const step: GoalStep = {
+      id: makeId("step"),
+      goalId,
+      title: title.trim(),
+      scheduledFor: scheduleToday ? getTodayKey() : undefined,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
     return {
-      ...item,
-      status,
-      updatedAt: timestamp,
-      plannedFor: status === "today" ? dayKey : undefined,
-      completedAt: status === "done" ? timestamp : undefined,
-      releasedAt: status === "released" ? timestamp : undefined
+      ...state,
+      goals: state.goals.map((goal) => goal.id === goalId ? { ...goal, status: "active", completedAt: undefined, updatedAt: timestamp } : goal),
+      steps: [step, ...state.steps]
     };
   }
 
-  setCapacity(state: AtlasDailyState, capacity: Capacity): AtlasDailyState {
+  scheduleStep(state: AtlasDailyState, stepId: string, scheduled = true): AtlasDailyState {
     const timestamp = now();
-    const dayKey = getTodayKey();
-    const previous = state.checkIns.find((checkIn) => checkIn.date === dayKey);
-    const checkIn: DailyCheckIn = previous
-      ? { ...previous, capacity, updatedAt: timestamp }
-      : {
-          id: makeId("checkin"),
-          date: dayKey,
-          capacity,
-          enoughNote: "",
-          createdAt: timestamp,
-          updatedAt: timestamp
-        };
     return {
       ...state,
-      checkIns: [checkIn, ...state.checkIns.filter((item) => item.date !== dayKey)]
+      steps: state.steps.map((step) => step.id === stepId ? {
+        ...step,
+        scheduledFor: scheduled ? getTodayKey() : undefined,
+        updatedAt: timestamp
+      } : step)
     };
   }
 
-  setEnoughNote(state: AtlasDailyState, enoughNote: string): AtlasDailyState {
+  completeStep(state: AtlasDailyState, stepId: string): AtlasDailyState {
     const timestamp = now();
-    const dayKey = getTodayKey();
-    const previous = state.checkIns.find((checkIn) => checkIn.date === dayKey);
-    const checkIn: DailyCheckIn = previous
-      ? { ...previous, enoughNote, updatedAt: timestamp }
-      : {
-          id: makeId("checkin"),
-          date: dayKey,
-          capacity: "cukup",
-          enoughNote,
-          createdAt: timestamp,
-          updatedAt: timestamp
-        };
+    const target = state.steps.find((step) => step.id === stepId);
+    if (!target) return state;
+    const nextSteps = state.steps.map((step) => step.id === stepId ? {
+      ...step,
+      completedAt: step.completedAt ? undefined : timestamp,
+      scheduledFor: step.completedAt ? step.scheduledFor : undefined,
+      updatedAt: timestamp
+    } : step);
+    const goalSteps = getGoalSteps(nextSteps, target.goalId);
+    const allDone = goalSteps.length > 0 && goalSteps.every((step) => step.completedAt);
     return {
       ...state,
-      checkIns: [checkIn, ...state.checkIns.filter((item) => item.date !== dayKey)]
+      steps: nextSteps,
+      goals: state.goals.map((goal) => goal.id === target.goalId ? {
+        ...goal,
+        status: allDone ? "completed" : "active",
+        completedAt: allDone ? timestamp : undefined,
+        updatedAt: timestamp
+      } : goal)
+    };
+  }
+
+  updateGoalStatus(state: AtlasDailyState, goalId: string, status: Goal["status"]): AtlasDailyState {
+    const timestamp = now();
+    return {
+      ...state,
+      goals: state.goals.map((goal) => goal.id === goalId ? {
+        ...goal,
+        status,
+        completedAt: status === "completed" ? timestamp : undefined,
+        updatedAt: timestamp
+      } : goal)
     };
   }
 
@@ -119,7 +161,7 @@ export class AtlasDailyService {
     const envelope: ImportEnvelope = {
       product: "atlas-daily",
       exportedAt: now(),
-      schemaVersion: 1,
+      schemaVersion: 2,
       state
     };
     return new Blob([JSON.stringify(envelope, null, 2)], { type: "application/json" });
